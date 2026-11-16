@@ -76,6 +76,8 @@ class MainActivity : AppCompatActivity() {
         val contents = result.contents
         if (!contents.isNullOrBlank() && contents.startsWith("http://")) {
             targetUrl = contents.trimEnd('/')
+            getSharedPreferences("myshare", MODE_PRIVATE)
+                .edit().putString("target_url", targetUrl).apply()
             b.instructionText.text = "Perangkat penerima terhubung. Pilih file yang akan dikirim."
             b.addressText.text = targetUrl
             pickFiles.launch(arrayOf("*/*"))
@@ -86,9 +88,31 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         b = ActivityMainBinding.inflate(layoutInflater)
         setContentView(b.root)
-        b.sendButton.setOnClickListener { scanReceiver() }
+
+        targetUrl = getSharedPreferences("myshare", MODE_PRIVATE)
+            .getString("target_url", null)
+
+        if (!targetUrl.isNullOrBlank()) {
+            b.addressText.text = targetUrl
+            b.instructionText.text = "Penerima tersimpan. Pilih file untuk mengirim."
+        }
+
+        b.sendButton.setOnClickListener { connectOrPickFiles() }
+        b.sendButton.setOnLongClickListener {
+            scanReceiver()
+            true
+        }
         b.receiveButton.setOnClickListener { startReceiving() }
         showHistory()
+    }
+
+    private fun connectOrPickFiles() {
+        if (!targetUrl.isNullOrBlank()) {
+            b.addressText.text = targetUrl
+            pickFiles.launch(arrayOf("*/*"))
+        } else {
+            scanReceiver()
+        }
     }
 
     private fun scanReceiver() {

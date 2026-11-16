@@ -7,6 +7,9 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.OpenableColumns
 import android.view.View
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
+import androidx.appcompat.app.AlertDialog
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -65,6 +68,14 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         addHistory("Diterima: $name")
                         b.statusText.text = "File berhasil diterima"
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("File Diterima!")
+                            .setMessage("$name\\n\\nFile berhasil disimpan. Buka sekarang?")
+                            .setPositiveButton("BUKA SEKARANG") { _, _ ->
+                                openReceivedFile(name)
+                            }
+                            .setNegativeButton("NANTI", null)
+                            .show()
                     }
                 }.also { it.start() }
                 val address = "http://$ip:8989"
@@ -173,6 +184,36 @@ class MainActivity : AppCompatActivity() {
         val old = prefs.getString("history", "").orEmpty().lines().filter { it.isNotBlank() }
         prefs.edit().putString("history", (listOf("${java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}  $line") + old).take(12).joinToString("\n")).apply()
         showHistory()
+    }
+
+
+    private fun openReceivedFile(name: String) {
+        try {
+            val file = File(getReceiveFolder(), name)
+            if (!file.exists()) {
+                toast("File tidak ditemukan.")
+                return
+            }
+
+            val extension = file.extension.lowercase()
+            val mime = MimeTypeMap.getSingleton()
+                .getMimeTypeFromExtension(extension) ?: "*/*"
+
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                file
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            startActivity(Intent.createChooser(intent, "Buka file dengan"))
+        } catch (e: Exception) {
+            toast("Tidak ada aplikasi yang dapat membuka file ini: ${e.message}")
+        }
     }
 
     private fun showHistory() { b.historyText.text = getSharedPreferences("myshare", MODE_PRIVATE).getString("history", "Belum ada transfer.") }

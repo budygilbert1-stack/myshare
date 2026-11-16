@@ -1,0 +1,40 @@
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="#F3F6FC" android:fillViewport="true">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:padding="22dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="MY SHARE" android:textColor="#102A56" android:textSize="30sp" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="TRANSFER FILE • TANPA INTERNET" android:textColor="#60708A" android:textSize="12sp" android:letterSpacing="0.08" android:layout_marginTop="3dp" />
+        <TextView android:id="@+id/statusText" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Siap digunakan" android:textColor="#16845B" android:textStyle="bold" android:padding="14dp"
+            android:background="#E2F6EC" android:layout_marginTop="24dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/sendButton"
+            android:layout_width="match_parent" android:layout_height="64dp" android:text="KIRIM  •  Send Files"
+            android:textSize="16sp" android:layout_marginTop="18dp" />
+        <com.google.android.material.button.MaterialButton android:id="@+id/receiveButton"
+            android:layout_width="match_parent" android:layout_height="64dp" android:text="TERIMA  •  Receive Files"
+            android:textSize="16sp" android:layout_marginTop="12dp" android:backgroundTint="#0D9488" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="HUBUNGKAN PERANGKAT" android:textColor="#102A56" android:textStyle="bold" android:textSize="14sp"
+            android:layout_marginTop="28dp" />
+        <TextView android:id="@+id/instructionText" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Pilih KIRIM atau TERIMA untuk memulai." android:textColor="#60708A" android:textSize="14sp" android:layout_marginTop="7dp" />
+        <ImageView android:id="@+id/qrImage" android:layout_width="220dp" android:layout_height="220dp"
+            android:layout_gravity="center_horizontal" android:layout_marginTop="14dp" android:visibility="gone" android:contentDescription="QR Code koneksi" />
+        <TextView android:id="@+id/addressText" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:gravity="center" android:textColor="#1457D9" android:textStyle="bold" android:textSize="14sp" android:layout_marginTop="8dp" />
+        <ProgressBar android:id="@+id/progressBar" style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent" android:layout_height="10dp" android:layout_marginTop="22dp" android:max="100" android:visibility="gone" />
+        <TextView android:id="@+id/progressText" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textColor="#34445E" android:textSize="13sp" android:layout_marginTop="6dp" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="RIWAYAT TRANSFER" android:textColor="#102A56" android:textStyle="bold" android:textSize="14sp" android:layout_marginTop="28dp" />
+        <TextView android:id="@+id/historyText" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Belum ada transfer." android:textColor="#60708A" android:textSize="13sp" android:paddingTop="8dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="File diterima disimpan di folder aplikasi: Android/data/id.budiman.myshare/files/Download/MyShare"
+            android:textColor="#8793A7" android:textSize="11sp" android:layout_marginTop="24dp" />
+    </LinearLayout>
+</ScrollView>

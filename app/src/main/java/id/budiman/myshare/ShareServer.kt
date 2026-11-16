@@ -44,8 +44,17 @@ class ShareServer(
                     n++
                 }
 
-                FileInputStream(source).use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
+                folder.mkdirs()
+
+                // Pindahkan file sementara jika memungkinkan.
+                // Jika gagal, salin menggunakan buffer 256 KB.
+                if (!source.renameTo(dest)) {
+                    FileInputStream(source).use { input ->
+                        dest.outputStream().buffered(256 * 1024).use { output ->
+                            input.copyTo(output, 256 * 1024)
+                        }
+                    }
+                    source.delete()
                 }
                 onReceived(dest.name)
                 newFixedLengthResponse(Response.Status.OK, "text/plain", "OK:${dest.name}")

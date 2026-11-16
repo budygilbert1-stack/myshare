@@ -167,38 +167,82 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendFiles(uris: List<Uri>) {
-        val base = targetUrl ?: run { toast("Pindai QR penerima terlebih dahulu."); return }
+        val base = targetUrl ?: run {
+            toast("Pindai QR penerima terlebih dahulu.")
+            return
+        }
+
         b.progressBar.visibility = View.VISIBLE
+        b.progressBar.isIndeterminate = false
         b.progressBar.progress = 0
         b.progressText.text = "Menyiapkan ${uris.size} file..."
         startDots("Mengirim file")
+
         io.execute {
             var success = 0
+
             uris.forEachIndexed { index, uri ->
-                try {
-                    val name = getFileName(uri)
-                    uploadOne(base, uri, name)
-                    success++
-                    val savedUri = uri.toString()
-                    runOnUiThread { addHistory("Terkirim", name, savedUri) }
-                } catch (e: Exception) {
-                    runOnUiThread { b.progressText.text = "Gagal: ${e.message}" }
-                }
+                val name = getFileName(uri)
+                val total = getFileSize(uri)
+
                 runOnUiThread {
-                    b.progressBar.progress = ((index + 1) * 100 / uris.size)
-                    b.progressText.text = "${index + 1}/${uris.size} file diproses"
+                    b.progressBar.isIndeterminate = total <= 0
+                    b.progressBar.progress = 0
+                    b.progressText.text =
+                        "File ${index + 1}/${uris.size}\n$name\nMenyiapkan transfer..."
+                }
+
+                try {
+                    uploadOne(base, uri, name) { sent, fileSize, speed, remaining ->
+                        runOnUiThread {
+                            if (fileSize > 0) {
+                                val percent = ((sent * 100) / fileSize)
+                                    .coerceIn(0, 100).toInt()
+                                b.progressBar.isIndeterminate = false
+                                b.progressBar.progress = percent
+                                b.progressText.text =
+                                    "File ${index + 1}/${uris.size} • $name\n" +
+                                    "$percent% • ${formatBytes(sent)} / ${formatBytes(fileSize)}\n" +
+                                    "Kecepatan: ${formatSpeed(speed)} • Sisa: ${formatDuration(remaining)}"
+                            } else {
+                                b.progressBar.isIndeterminate = true
+                                b.progressText.text =
+                                    "File ${index + 1}/${uris.size} • $name\n" +
+                                    "${formatBytes(sent)} terkirim\n" +
+                                    "Kecepatan: ${formatSpeed(speed)}"
+                            }
+                        }
+                    }
+
+                    success++
+                    runOnUiThread {
+                        addHistory("Terkirim", name, uri.toString())
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        b.progressText.text = "Gagal mengirim $name\n${e.message}"
+                    }
                 }
             }
+
             runOnUiThread {
+                b.progressBar.isIndeterminate = false
+                b.progressBar.progress = 100
                 stopDots("✓ Selesai • $success/${uris.size} file terkirim")
-                b.progressText.text = "Transfer selesai."
+                b.progressText.text =
+                    "Transfer selesai.\nBerhasil: $success dari ${uris.size} file."
                 showHistory()
                 toast("Transfer selesai: $success/${uris.size} file")
             }
         }
     }
 
-    private fun uploadOne(base: String, uri: Uri, name: String) {
+    private fun uploadOne(
+        base: String,
+        uri: Uri,
+        name: String,
+        onProgress: (Long, Long, Double, Long) -> Unit
+    ) {
         val boundary = "----MyShare${System.currentTimeMillis()}"
         val url = URL("$base/upload")
         val conn = (url.openConnection() as HttpURLConnection).apply {
@@ -208,16 +252,111 @@ class MainActivity : AppCompatActivity() {
             readTimeout = 120000
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
         }
+
+        val totalBytes = getFileSize(uri)
+        val startedAt = System.currentTimeMillis()
+        var lastUpdate = 0L
+        var sentBytes = 0L
         val safeName = name.replace("\"", "_").replace("\r", "_").replace("\n", "_")
-        conn.outputStream.use { out ->
-            out.write("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"$safeName\"\r\nContent-Type: application/octet-stream\r\n\r\n".toByteArray())
-            contentResolver.openInputStream(uri)?.use { input -> input.copyTo(out, 64 * 1024) } ?: error("File tidak dapat dibaca")
-            out.write("\r\n--$boundary--\r\n".toByteArray())
+
+        try {
+            conn.outputStream.use { out ->
+                out.write((
+                    "--$boundary\r\n" +
+                    "Content-Disposition: form-data; name=\"file\"; filename=\"$safeName\"\r\n" +
+                    "Content-Type: application/octet-stream\r\n\r\n"
+                ).toByteArray())
+
+                val input = contentResolver.openInputStream(uri)
+                    ?: error("File tidak dapat dibaca")
+
+                input.use {
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val count = it.read(buffer)
+                        if (count == -1) break
+
+                        out.write(buffer, 0, count)
+                        sentBytes += count
+
+                        val now = System.currentTimeMillis()
+                        if (now - lastUpdate >= 150 || (totalBytes > 0 && sentBytes >= totalBytes)) {
+                            val elapsed = ((now - startedAt).coerceAtLeast(1)) / 1000.0
+                            val speed = sentBytes / elapsed
+                            val remaining = if (totalBytes > sentBytes && speed > 0) {
+                                ((totalBytes - sentBytes) / speed).toLong()
+                            } else {
+                                0L
+                            }
+
+                            onProgress(sentBytes, totalBytes, speed, remaining)
+                            lastUpdate = now
+                        }
+                    }
+                }
+
+                out.write("\r\n--$boundary--\r\n".toByteArray())
+                out.flush()
+            }
+
+            val code = conn.responseCode
+            val response = (
+                if (code in 200..299) conn.inputStream else conn.errorStream
+            )?.bufferedReader()?.use { it.readText() }.orEmpty()
+
+            if (code !in 200..299) {
+                error("Server menolak file ($code): $response")
+            }
+
+            val elapsed = ((System.currentTimeMillis() - startedAt).coerceAtLeast(1)) / 1000.0
+            onProgress(sentBytes, totalBytes, sentBytes / elapsed, 0L)
+        } finally {
+            conn.disconnect()
         }
-        val code = conn.responseCode
-        val response = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-        conn.disconnect()
-        if (code !in 200..299) error("Server menolak file ($code): $response")
+    }
+
+    private fun getFileSize(uri: Uri): Long {
+        return try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val column = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (column >= 0 && cursor.moveToFirst()) {
+                    val size = cursor.getLong(column)
+                    if (size >= 0) return size
+                }
+            }
+
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use {
+                it.length
+            } ?: -1L
+        } catch (_: Exception) {
+            -1L
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        val mb = 1024.0 * 1024.0
+        return when {
+            bytes >= mb -> String.format(java.util.Locale.getDefault(), "%.1f MB", bytes / mb)
+            bytes >= 1024 -> String.format(java.util.Locale.getDefault(), "%.1f KB", bytes / 1024.0)
+            else -> "$bytes B"
+        }
+    }
+
+    private fun formatSpeed(bytesPerSecond: Double): String {
+        val mb = 1024.0 * 1024.0
+        return String.format(
+            java.util.Locale.getDefault(),
+            "%.2f MB/s",
+            bytesPerSecond / mb
+        )
+    }
+
+    private fun formatDuration(seconds: Long): String {
+        return when {
+            seconds < 60 -> "$seconds detik"
+            seconds < 3600 -> "${seconds / 60} m ${seconds % 60} d"
+            else -> "${seconds / 3600} j ${(seconds % 3600) / 60} m"
+        }
     }
 
     private fun getFileName(uri: Uri): String {

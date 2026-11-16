@@ -268,72 +268,104 @@ class MainActivity : AppCompatActivity() {
         onProgress: (Long, Long, Double, Long) -> Unit
     ) {
         val boundary = "----MyShare${System.currentTimeMillis()}"
-        val url = URL("$base/upload")
-        val conn = (url.openConnection() as HttpURLConnection).apply {
+        val safeName = name.replace("\"", "_")
+            .replace("\r", "_")
+            .replace("\n", "_")
+
+        val prefix = (
+            "--$boundary\r\n" +
+            "Content-Disposition: form-data; name=\"file\"; filename=\"$safeName\"\r\n" +
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).toByteArray()
+
+        val suffix = "\r\n--$boundary--\r\n".toByteArray()
+        val totalBytes = getFileSize(uri)
+
+        val conn = (URL("$base/upload").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
-            connectTimeout = 15000
-            readTimeout = 120000
-            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            connectTimeout = 30000
+            readTimeout = 300000
+            useCaches = false
+            setRequestProperty(
+                "Content-Type",
+                "multipart/form-data; boundary=$boundary"
+            )
+
+            if (totalBytes >= 0) {
+                setFixedLengthStreamingMode(
+                    prefix.size.toLong() + totalBytes + suffix.size
+                )
+            } else {
+                setChunkedStreamingMode(256 * 1024)
+            }
         }
 
-        val totalBytes = getFileSize(uri)
         val startedAt = System.currentTimeMillis()
         var lastUpdate = 0L
         var sentBytes = 0L
-        val safeName = name.replace("\"", "_").replace("\r", "_").replace("\n", "_")
 
         try {
-            conn.outputStream.use { out ->
-                out.write((
-                    "--$boundary\r\n" +
-                    "Content-Disposition: form-data; name=\"file\"; filename=\"$safeName\"\r\n" +
-                    "Content-Type: application/octet-stream\r\n\r\n"
-                ).toByteArray())
+            val input = contentResolver.openInputStream(uri)
+                ?: error("File tidak dapat dibaca")
 
-                val input = contentResolver.openInputStream(uri)
-                    ?: error("File tidak dapat dibaca")
+            input.use { fileInput ->
+                java.io.BufferedOutputStream(
+                    conn.outputStream,
+                    256 * 1024
+                ).use { out ->
+                    out.write(prefix)
 
-                input.use {
-                    val buffer = ByteArray(64 * 1024)
+                    val buffer = ByteArray(256 * 1024)
+
                     while (true) {
-                        val count = it.read(buffer)
+                        val count = fileInput.read(buffer)
                         if (count == -1) break
 
                         out.write(buffer, 0, count)
                         sentBytes += count
 
                         val now = System.currentTimeMillis()
-                        if (now - lastUpdate >= 150 || (totalBytes > 0 && sentBytes >= totalBytes)) {
-                            val elapsed = ((now - startedAt).coerceAtLeast(1)) / 1000.0
+
+                        if (now - lastUpdate >= 150 ||
+                            (totalBytes > 0 && sentBytes >= totalBytes)
+                        ) {
+                            out.flush()
+
+                            val elapsed =
+                                ((now - startedAt).coerceAtLeast(1)) / 1000.0
                             val speed = sentBytes / elapsed
-                            val remaining = if (totalBytes > sentBytes && speed > 0) {
-                                ((totalBytes - sentBytes) / speed).toLong()
-                            } else {
-                                0L
-                            }
+
+                            val remaining =
+                                if (totalBytes > sentBytes && speed > 0) {
+                                    ((totalBytes - sentBytes) / speed).toLong()
+                                } else 0L
 
                             onProgress(sentBytes, totalBytes, speed, remaining)
                             lastUpdate = now
                         }
                     }
-                }
 
-                out.write("\r\n--$boundary--\r\n".toByteArray())
-                out.flush()
+                    out.write(suffix)
+                    out.flush()
+                }
             }
 
             val code = conn.responseCode
             val response = (
-                if (code in 200..299) conn.inputStream else conn.errorStream
+                if (code in 200..299) conn.inputStream
+                else conn.errorStream
             )?.bufferedReader()?.use { it.readText() }.orEmpty()
 
             if (code !in 200..299) {
                 error("Server menolak file ($code): $response")
             }
 
-            val elapsed = ((System.currentTimeMillis() - startedAt).coerceAtLeast(1)) / 1000.0
+            val elapsed =
+                ((System.currentTimeMillis() - startedAt).coerceAtLeast(1)) / 1000.0
+
             onProgress(sentBytes, totalBytes, sentBytes / elapsed, 0L)
+
         } finally {
             conn.disconnect()
         }

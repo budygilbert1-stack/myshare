@@ -4,6 +4,12 @@ import android.content.Intent
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.widget.TextView
+import android.widget.LinearLayout
+import org.json.JSONArray
+import org.json.JSONObject
 import android.os.Environment
 import android.provider.OpenableColumns
 import android.view.View
@@ -30,9 +36,41 @@ class MainActivity : AppCompatActivity() {
     private var server: ShareServer? = null
     private var targetUrl: String? = null
     private val io = Executors.newSingleThreadExecutor()
+    private val handler = Handler(Looper.getMainLooper())
+    private var dotIndex = 0
+    private var dotLabel = ""
+    private val dotRunner = object : Runnable {
+        override fun run() {
+            val dots = listOf("●○○", "●●○", "●●●", "○●●", "○○●", "○○○")
+            b.statusText.text = "$dotLabel  ${dots[dotIndex % dots.size]}"
+            dotIndex++
+            handler.postDelayed(this, 300)
+        }
+    }
+
+    private fun startDots(label: String) {
+        handler.removeCallbacks(dotRunner)
+        dotLabel = label
+        dotIndex = 0
+        handler.post(dotRunner)
+    }
+
+    private fun stopDots(message: String) {
+        handler.removeCallbacks(dotRunner)
+        b.statusText.text = message
+    }
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) sendFiles(uris)
+        if (uris.isNotEmpty()) {
+            uris.forEach {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        it, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {}
+            }
+            sendFiles(uris)
+        }
     }
     private val scanQr = registerForActivityResult(ScanContract()) { result ->
         val contents = result.contents
@@ -64,20 +102,31 @@ class MainActivity : AppCompatActivity() {
         try {
             if (server == null) {
                 val ip = findLocalIp() ?: "192.168.43.1"
-                server = ShareServer(8989, getReceiveFolder()) { name ->
+                server = ShareServer(
+                    8989,
+                    getReceiveFolder(),
+                    onReceiving = {
+                        runOnUiThread { startDots("Menerima file") }
+                    },
+                    onReceived = { name ->
                     runOnUiThread {
-                        addHistory("Diterima: $name")
-                        b.statusText.text = "File berhasil diterima"
+                        stopDots("✓ File berhasil diterima")
+                        addHistory("Diterima", name, "")
+
                         AlertDialog.Builder(this@MainActivity)
                             .setTitle("File Diterima!")
-                            .setMessage("$name\\n\\nFile berhasil disimpan. Buka sekarang?")
+                            .setMessage("$name\n\nFile berhasil disimpan. Buka sekarang?")
                             .setPositiveButton("BUKA SEKARANG") { _, _ ->
                                 openReceivedFile(name)
                             }
                             .setNegativeButton("NANTI", null)
                             .show()
                     }
-                }.also { it.start() }
+                    },
+                    onError = { error ->
+                        runOnUiThread { stopDots("Transfer gagal: $error") }
+                    }
+                ).also { it.start() }
                 val address = "http://$ip:8989"
                 b.qrImage.setImageBitmap(QRCodeWriter().encode(address, BarcodeFormat.QR_CODE, 600, 600).toBitmap())
                 b.qrImage.visibility = View.VISIBLE
@@ -122,7 +171,7 @@ class MainActivity : AppCompatActivity() {
         b.progressBar.visibility = View.VISIBLE
         b.progressBar.progress = 0
         b.progressText.text = "Menyiapkan ${uris.size} file..."
-        b.statusText.text = "Sedang mengirim"
+        startDots("Mengirim file")
         io.execute {
             var success = 0
             uris.forEachIndexed { index, uri ->
@@ -130,7 +179,8 @@ class MainActivity : AppCompatActivity() {
                     val name = getFileName(uri)
                     uploadOne(base, uri, name)
                     success++
-                    runOnUiThread { addHistory("Terkirim: $name") }
+                    val savedUri = uri.toString()
+                    runOnUiThread { addHistory("Terkirim", name, savedUri) }
                 } catch (e: Exception) {
                     runOnUiThread { b.progressText.text = "Gagal: ${e.message}" }
                 }
@@ -140,7 +190,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             runOnUiThread {
-                b.statusText.text = "Selesai • $success/${uris.size} file terkirim"
+                stopDots("✓ Selesai • $success/${uris.size} file terkirim")
                 b.progressText.text = "Transfer selesai."
                 showHistory()
                 toast("Transfer selesai: $success/${uris.size} file")
@@ -179,13 +229,104 @@ class MainActivity : AppCompatActivity() {
         return name
     }
 
-    private fun addHistory(line: String) {
+    private fun addHistory(direction: String, name: String, uri: String) {
         val prefs = getSharedPreferences("myshare", MODE_PRIVATE)
-        val old = prefs.getString("history", "").orEmpty().lines().filter { it.isNotBlank() }
-        prefs.edit().putString("history", (listOf("${java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}  $line") + old).take(12).joinToString("\n")).apply()
+        val old = try {
+            JSONArray(prefs.getString("history_items", "[]"))
+        } catch (_: Exception) {
+            JSONArray()
+        }
+        val item = JSONObject().apply {
+            put("direction", direction)
+            put("name", name)
+            put("uri", uri)
+            put("time", java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date()))
+        }
+        val updated = JSONArray().apply {
+            put(item)
+            for (i in 0 until minOf(old.length(), 19)) put(old.getJSONObject(i))
+        }
+        prefs.edit().putString("history_items", updated.toString()).apply()
         showHistory()
     }
 
+    private fun openHistoryFile(direction: String, name: String, uriText: String) {
+        try {
+            val uri = if (direction == "Diterima") {
+                val file = File(getReceiveFolder(), name)
+                if (!file.exists()) {
+                    toast("File sudah tidak ditemukan.")
+                    return
+                }
+                FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            } else {
+                Uri.parse(uriText)
+            }
+
+            val mime = contentResolver.getType(uri)
+                ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(
+                    name.substringAfterLast('.', "").lowercase()
+                ) ?: "*/*"
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Buka file dengan"))
+        } catch (e: Exception) {
+            toast("File tidak dapat dibuka: ${e.message}")
+        }
+    }
+
+    private fun showHistory() {
+        val list = b.historyList
+        list.removeAllViews()
+
+        val prefs = getSharedPreferences("myshare", MODE_PRIVATE)
+        val items = try {
+            JSONArray(prefs.getString("history_items", "[]"))
+        } catch (_: Exception) {
+            JSONArray()
+        }
+
+        if (items.length() == 0) {
+            val empty = TextView(this).apply {
+                text = prefs.getString("history", "Belum ada transfer.")
+                textSize = 13f
+                setTextColor(0xFF60708A.toInt())
+                setPadding(0, 12, 0, 12)
+            }
+            list.addView(empty)
+            return
+        }
+
+        for (i in 0 until items.length()) {
+            val item = items.getJSONObject(i)
+            val direction = item.optString("direction")
+            val name = item.optString("name")
+            val uri = item.optString("uri")
+            val time = item.optString("time")
+
+            val row = TextView(this).apply {
+                text = "📄  $name\n      $direction • $time     ›"
+                textSize = 14f
+                setTextColor(0xFF1457D9.toInt())
+                setPadding(12, 14, 12, 14)
+                setBackgroundResource(android.R.drawable.list_selector_background)
+                isClickable = true
+                setOnClickListener {
+                    openHistoryFile(direction, name, uri)
+                }
+            }
+            list.addView(row)
+            val divider = View(this).apply {
+                setBackgroundColor(0xFFE1E7F0.toInt())
+            }
+            list.addView(divider, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 1
+            ))
+        }
+    }
 
     private fun openReceivedFile(name: String) {
         try {
@@ -216,8 +357,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showHistory() { b.historyText.text = getSharedPreferences("myshare", MODE_PRIVATE).getString("history", "Belum ada transfer.") }
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 
-    override fun onDestroy() { server?.stop(); io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { handler.removeCallbacks(dotRunner); server?.stop(); io.shutdown(); super.onDestroy() }
 }

@@ -31,8 +31,7 @@
             android:textColor="#34445E" android:textSize="13sp" android:layout_marginTop="6dp" />
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:text="RIWAYAT TRANSFER" android:textColor="#102A56" android:textStyle="bold" android:textSize="14sp" android:layout_marginTop="28dp" />
-        <TextView android:id="@+id/historyText" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="Belum ada transfer." android:textColor="#60708A" android:textSize="13sp" android:paddingTop="8dp" />
+        <LinearLayout android:id="@+id/historyList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingTop="8dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="File diterima disimpan di folder aplikasi: Android/data/id.budiman.myshare/files/Download/MyShare"
             android:textColor="#8793A7" android:textSize="11sp" android:layout_marginTop="24dp" />
